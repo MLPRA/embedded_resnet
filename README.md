@@ -1,1 +1,1 @@
-# embedded_resnet
+# resnet
