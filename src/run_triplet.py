@@ -1,11 +1,12 @@
 from argparse import ArgumentParser
 import chainer
-from src.resnet import ResNet50Layers
+from src.resnet import ResNet49Layers
 from chainer.training import extensions
 
-from src.classifier import Classifier
-from src.dataset import LabeledImageDatasetBuilder, LabelHandler
+from src.dataset import LabelHandler
 from src.data_loader import SortedImageDatasetBuilder
+from tripletembedding.predictors.tripletnet import TripletNet
+from tripletembedding.iterators import TripletIterator
 
 
 def run_train():
@@ -20,41 +21,32 @@ def run_train():
                         help='Learning minibatch size')
     parser.add_argument('--epoch', type=int, default=10,
                         help='Numbers of epochs to train')
-    parser.add_argument('--gpu', type=int, default=-1,
+    parser.add_argument('--gpu', type=int, default=0,
                         help='GPU ID, negative value indicates CPU')
     parser.add_argument('--out', default='trainer_output',
                         help='Output directory of trainer')
     parser.add_argument('--val_batchsize', type=int, default=250,
                         help='Validation minibatch size')
+    parser.add_argument('--pretrained_model', type=str, default=None)
     args = parser.parse_args()
 
-    # create model
-    predictor = ResNet50Layers(None)
-    model = Classifier(predictor)
-
-    # TODO: initmodel
-
-    # use selected gpu by id
+    tn = TripletNet(cnn=ResNet49Layers, kwargs={'pretrained_model': args.pretrained_model})
     if args.gpu >= 0:
         chainer.cuda.get_device_from_id(args.gpu).use()
-        model.to_gpu()
+        tn.to_gpu()
 
-    # build datasets from paths
     label_handler = LabelHandler(args.label_names)
-
-    # builder = LabeledImageDatasetBuilder(args.paths, label_handler)
-    # train_dataset, val_dataset = builder.get_labeled_image_dataset_split(args.training_splitsize)
     builder = SortedImageDatasetBuilder(args.paths, label_handler)
     train_dataset, val_dataset = builder.get_sorted_image_dataset_split(args.training_splitsize)
 
-    train_iter = chainer.iterators.SerialIterator(train_dataset, args.batchsize)
-    val_iter = chainer.iterators.SerialIterator(val_dataset, args.val_batchsize, repeat=False)
+    train_iter = TripletIterator(train_dataset, args.batchsize)
+    val_iter = TripletIterator(val_dataset, args.val_batchsize)
 
     # optimizer
     learning_rate = 0.01
     momentum = 0.9
     optimizer = chainer.optimizers.MomentumSGD(learning_rate, momentum)
-    optimizer.setup(model)
+    optimizer.setup(tn)
 
     # trainer
     updater = chainer.training.updater.StandardUpdater(train_iter, optimizer, device=args.gpu)
@@ -63,8 +55,9 @@ def run_train():
     trainer.extend(extensions.LogReport())
     trainer.extend(chainer.training.extensions.ProgressBar(update_interval=10))
 
+    print('@A')
     trainer.run()
 
     # save model
-    output_file_path = '{0}/resnet_{1}_{2}.model'.format(args.out, args.batchsize, args.epoch)
-    chainer.serializers.save_npz(output_file_path, predictor)
+    output_file_path = '{0}/triplet_net_{1}_{2}.model'.format(args.out, args.batchsize, args.epoch)
+    chainer.serializers.save_npz(output_file_path, tn)
